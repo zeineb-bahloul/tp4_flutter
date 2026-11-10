@@ -1,11 +1,20 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:waiting_room_app/queue_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialiser sqflite pour Windows / macOS / Linux desktop
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
   // Load .env file
   try {
@@ -14,41 +23,33 @@ void main() async {
     debugPrint('Could not load .env file: $e');
   }
 
-  // Initialize Supabase if keys are provided
-  final rawUrl = (dotenv.env['SUPABASE_URL'] ?? '').trim();
-  final supabaseAnonKey = (dotenv.env['SUPABASE_ANON_KEY'] ?? '').trim();
+  // Configuration Supabase avec fallback pour le Web
+  const defaultSupabaseUrl = 'https://yyvxowsptnfcomzuavgj.supabase.co';
+  const defaultSupabaseKey = 'sb_publishable_hkUPwiGwJEUAM0oQjLRaoQ_E3nu2OF8';
 
-  String supabaseUrl = rawUrl;
+  final envUrl = (dotenv.env['SUPABASE_URL'] ?? '').trim();
+  final envKey = (dotenv.env['SUPABASE_ANON_KEY'] ?? '').trim();
+
+  String supabaseUrl = envUrl.isNotEmpty ? envUrl : defaultSupabaseUrl;
+  String supabaseAnonKey = envKey.isNotEmpty ? envKey : defaultSupabaseKey;
+
   try {
-    final parsed = Uri.parse(rawUrl);
+    final parsed = Uri.parse(supabaseUrl);
     if (parsed.hasScheme && parsed.host.isNotEmpty) {
       supabaseUrl = '${parsed.scheme}://${parsed.host}';
     }
   } catch (_) {}
 
-  debugPrint('Using cleaned Supabase URL: $supabaseUrl');
+  debugPrint('Using Supabase URL: $supabaseUrl');
 
-  if (supabaseUrl.isNotEmpty && 
-      supabaseAnonKey.isNotEmpty && 
-      !supabaseUrl.contains('your_supabase_url')) {
-    try {
-      await Supabase.initialize(
-        url: supabaseUrl,
-        publishableKey: supabaseAnonKey,
-      );
-
-      // Attempt anonymous sign in if enabled
-      try {
-        final authResponse = await Supabase.instance.client.auth.signInAnonymously();
-        debugPrint('Signed in anonymously as user: ${authResponse.user?.id}');
-      } catch (authError) {
-        debugPrint('Anonymous sign-in skipped or failed: $authError');
-      }
-    } catch (e) {
-      debugPrint('Failed to initialize Supabase: $e');
-    }
-  } else {
-    debugPrint('Supabase credentials not configured in .env yet.');
+  try {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
+    );
+    debugPrint('Supabase initialized successfully!');
+  } catch (e) {
+    debugPrint('Failed to initialize Supabase: $e');
   }
 
   runApp(
@@ -146,20 +147,19 @@ class _WaitingRoomScreenState extends State<WaitingRoomScreen> {
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 4),
                         child: ListTile(
-                          title: Text(client.name),
+                          title: Text(client['name'] as String),
                           subtitle: Text(
-                            client.createdAt.toString().split(' ')[0],
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
+                            client['lat'] == null
+                                ? '📍 Location not captured'
+                                : '📍 ${(client['lat'] as num?)?.toStringAsFixed(4)}, ${(client['lng'] as num?)?.toStringAsFixed(4)}',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
                           ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
                             onPressed: () {
                               context
                                   .read<QueueProvider>()
-                                  .removeClient(client.id);
+                                  .removeClient(client['id'] as String);
                             },
                           ),
                         ),

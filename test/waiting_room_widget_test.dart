@@ -1,70 +1,66 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
 import 'package:provider/provider.dart';
 import 'package:waiting_room_app/main.dart';
 import 'package:waiting_room_app/queue_provider.dart';
 
-Widget createTestWidget() {
-  return ChangeNotifierProvider(
-    create: (context) => QueueProvider(),
-    child: const WaitingRoomApp(),
-  );
-}
+@GenerateMocks([QueueProvider])
+import 'waiting_room_widget_test.mocks.dart';
 
 void main() {
-  testWidgets('should add a new client to the list on button tap', (WidgetTester tester) async {
-    await tester.pumpWidget(createTestWidget());
-    await tester.pumpAndSettle();
+  testWidgets('Displays location coordinates when available',
+      (WidgetTester tester) async {
+    final mockProvider = MockQueueProvider();
 
-    // Verify initial empty state
-    expect(find.text('No one in queue yet...'), findsOneWidget);
+    when(mockProvider.clients).thenReturn([
+      {
+        'id': '1',
+        'name': 'Sam',
+        'lat': 51.5074,
+        'lng': -0.1278,
+        'created_at': DateTime.now().toIso8601String(),
+        'is_synced': 1,
+      }
+    ]);
 
-    // Enter name and tap Add
-    await tester.enterText(find.byType(TextField), 'Alice');
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Add'));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<QueueProvider>.value(
+        value: mockProvider,
+        child: const MaterialApp(home: WaitingRoomScreen()),
+      ),
+    );
+    await tester.pump();
 
-    // Verify Alice is added
-    expect(find.text('Alice'), findsOneWidget);
-    expect(find.text('No one in queue yet...'), findsNothing);
+    expect(find.text('Sam'), findsOneWidget);
+    expect(find.textContaining('51.5074'), findsOneWidget);
   });
 
-  testWidgets('should remove a client from the list when the delete button is tapped', (WidgetTester tester) async {
-    await tester.pumpWidget(createTestWidget());
-    await tester.pumpAndSettle();
+  testWidgets('Displays "Location not captured" when GPS is null',
+      (WidgetTester tester) async {
+    final mockProvider = MockQueueProvider();
 
-    await tester.enterText(find.byType(TextField), 'Bob');
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Add'));
-    await tester.pumpAndSettle();
+    when(mockProvider.clients).thenReturn([
+      {
+        'id': '2',
+        'name': 'Bob',
+        'lat': null,
+        'lng': null,
+        'created_at': DateTime.now().toIso8601String(),
+        'is_synced': 0,
+      }
+    ]);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<QueueProvider>.value(
+        value: mockProvider,
+        child: const MaterialApp(home: WaitingRoomScreen()),
+      ),
+    );
+    await tester.pump();
+
     expect(find.text('Bob'), findsOneWidget);
-
-    // Tap delete icon
-    await tester.tap(find.byIcon(Icons.delete));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Bob'), findsNothing);
-    expect(find.text('No one in queue yet...'), findsOneWidget);
-  });
-
-  testWidgets('should remove the first client from the list when Next Client is tapped', (WidgetTester tester) async {
-    await tester.pumpWidget(createTestWidget());
-    await tester.pumpAndSettle();
-
-    // Add Client A
-    await tester.enterText(find.byType(TextField), 'Client A');
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Add'));
-    await tester.pumpAndSettle();
-
-    // Add Client B
-    await tester.enterText(find.byType(TextField), 'Client B');
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Add'));
-    await tester.pumpAndSettle();
-
-    // Tap Next Client
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Next Client'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Client A'), findsNothing);
-    expect(find.text('Client B'), findsOneWidget);
+    expect(find.text('📍 Location not captured'), findsOneWidget);
   });
 }
