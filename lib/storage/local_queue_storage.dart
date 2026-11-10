@@ -1,49 +1,49 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import '../models/sync_status.dart';
 
-class LocalQueueService {
+class LocalQueueStorage {
   Database? _database;
-  static const String tableName = 'local_clients';
-  final bool _inMemory;
+  final bool inMemory;
   final List<Map<String, dynamic>> _webStorage = [];
 
-  LocalQueueService({bool inMemory = false}) : _inMemory = inMemory;
+  LocalQueueStorage({this.inMemory = false});
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB();
-    return _database!;
-  }
-
-  Future<Database> _initDB() async {
-    if (_inMemory) {
-      return await openDatabase(
+    if (inMemory) {
+      _database = await openDatabase(
         ':memory:',
         version: 1,
         onCreate: _onCreate,
       );
-    } else {
-      final dbPath = await getDatabasesPath();
-      final path = join(dbPath, 'waiting_room.db');
-      return openDatabase(path, version: 1, onCreate: _onCreate);
+      return _database!;
     }
+    final path = join(await getDatabasesPath(), 'waiting_queue.db');
+    _database = await openDatabase(
+      path,
+      version: 1,
+      onCreate: _onCreate,
+    );
+    return _database!;
   }
 
-  void _onCreate(Database db, int version) async {
+  Future<void> _onCreate(Database db, int version) async {
     await db.execute('''
-      CREATE TABLE $tableName (
+      CREATE TABLE clients (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         lat REAL,
         lng REAL,
+        location_accuracy_m REAL,
         created_at TEXT NOT NULL,
-        is_synced INTEGER NOT NULL DEFAULT 0
+        sync_status TEXT NOT NULL
       )
     ''');
   }
 
-  Future<void> insertClientLocally(Map<String, dynamic> client) async {
+  Future<void> saveClient(Map<String, dynamic> client) async {
     if (kIsWeb) {
       _webStorage.removeWhere((c) => c['id'] == client['id']);
       _webStorage.add(Map<String, dynamic>.from(client));
@@ -51,7 +51,7 @@ class LocalQueueService {
     }
     final db = await database;
     await db.insert(
-      tableName,
+      'clients',
       client,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -60,45 +60,51 @@ class LocalQueueService {
   Future<List<Map<String, dynamic>>> getClients() async {
     if (kIsWeb) {
       final list = List<Map<String, dynamic>>.from(_webStorage);
-      list.sort((a, b) => (a['created_at'] as String).compareTo(b['created_at'] as String));
+      list.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
       return list;
     }
     final db = await database;
-    return db.query(tableName, orderBy: 'created_at ASC');
+    return db.query('clients', orderBy: 'created_at DESC, id DESC');
   }
 
-  Future<List<Map<String, dynamic>>> getUnsyncedClients() async {
+  /// Corrected: Fetches both 'pending' and 'failed' records for retry logic
+  Future<List<Map<String, dynamic>>> getPendingClients() async {
     if (kIsWeb) {
-      return _webStorage.where((c) => c['is_synced'] == 0).toList();
+      return _webStorage.where((c) => c['sync_status'] == 'pending' || c['sync_status'] == 'failed').toList();
     }
     final db = await database;
-    return db.query(tableName, where: 'is_synced = ?', whereArgs: [0]);
+    return db.query(
+      'clients',
+      where: 'sync_status = ? OR sync_status = ?',
+      whereArgs: ['pending', 'failed'],
+      orderBy: 'created_at ASC, id ASC',
+    );
   }
 
-  Future<void> markClientAsSynced(String id) async {
+  Future<void> updateSyncStatus(String id, SyncStatus status) async {
     if (kIsWeb) {
       final index = _webStorage.indexWhere((c) => c['id'] == id);
       if (index != -1) {
-        _webStorage[index]['is_synced'] = 1;
+        _webStorage[index]['sync_status'] = status.name;
       }
       return;
     }
     final db = await database;
     await db.update(
-      tableName,
-      {'is_synced': 1},
+      'clients',
+      {'sync_status': status.name},
       where: 'id = ?',
       whereArgs: [id],
     );
   }
 
-  Future<void> deleteClientLocally(String id) async {
+  Future<void> deleteClient(String id) async {
     if (kIsWeb) {
       _webStorage.removeWhere((c) => c['id'] == id);
       return;
     }
     final db = await database;
-    await db.delete(tableName, where: 'id = ?', whereArgs: [id]);
+    await db.delete('clients', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> clearAll() async {
@@ -107,7 +113,7 @@ class LocalQueueService {
       return;
     }
     final db = await database;
-    await db.delete(tableName);
+    await db.delete('clients');
   }
 
   Future<void> close() async {
