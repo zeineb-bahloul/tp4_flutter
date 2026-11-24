@@ -9,11 +9,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'providers/connectivity_provider.dart';
 import 'providers/queue_provider.dart';
 import 'repositories/queue_repository.dart';
-import 'screens/queue_screen.dart';
 import 'services/connectivity_service.dart';
 import 'services/geolocation_service.dart';
 import 'services/sync_service.dart';
 import 'storage/local_queue_storage.dart';
+import 'widgets/auth_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,10 +56,13 @@ void main() async {
   final repository = QueueRepository(supabaseClient, storage);
   final syncService = SyncService(storage, repository);
   final geolocationService = GeolocationService();
-  final connectivityService = ConnectivityService(supabaseClient ?? Supabase.instance.client);
+  final connectivityService = ConnectivityService(supabaseClient);
 
   final connectivityProvider = ConnectivityProvider(connectivityService);
-  await connectivityProvider.initialize();
+  // Initialiser de manière asynchrone sans bloquer le premier affichage de l'application
+  connectivityProvider.initialize().catchError((e) {
+    debugPrint('Error initializing connectivity provider: $e');
+  });
 
   final queueProvider = QueueProvider(
     repository,
@@ -73,13 +76,15 @@ void main() async {
         ChangeNotifierProvider.value(value: connectivityProvider),
         ChangeNotifierProvider.value(value: queueProvider),
       ],
-      child: const WaitingRoomApp(),
+      child: WaitingRoomApp(supabaseReady: supabaseClient != null),
     ),
   );
 }
 
 class WaitingRoomApp extends StatelessWidget {
-  const WaitingRoomApp({super.key});
+  const WaitingRoomApp({super.key, this.supabaseReady = true});
+
+  final bool supabaseReady;
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +95,7 @@ class WaitingRoomApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const QueueScreen(),
+      home: AuthGate(supabaseReady: supabaseReady),
     );
   }
 }

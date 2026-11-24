@@ -4,3 +4,4 @@ enum AppConnectivity {
   offline,
   backendUnavailable,
 }
+

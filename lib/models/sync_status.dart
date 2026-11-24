@@ -4,3 +4,4 @@ enum SyncStatus {
   synced,
   failed,
 }
+

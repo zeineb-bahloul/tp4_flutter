@@ -21,3 +21,4 @@ class QueueEmptyWidget extends StatelessWidget {
     );
   }
 }
+

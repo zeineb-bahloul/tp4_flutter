@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ConnectivityService {
   final Connectivity _connectivity;
-  final SupabaseClient _supabase;
+  final SupabaseClient? _supabase;
 
   ConnectivityService(
     this._supabase, {
@@ -11,8 +11,12 @@ class ConnectivityService {
   }) : _connectivity = connectivity ?? Connectivity();
 
   Future<bool> hasNetwork() async {
-    final results = await _connectivity.checkConnectivity();
-    return results.any((result) => result != ConnectivityResult.none);
+    try {
+      final results = await _connectivity.checkConnectivity();
+      return results.any((result) => result != ConnectivityResult.none);
+    } catch (_) {
+      return false;
+    }
   }
 
   Stream<bool> get networkChanges {
@@ -22,8 +26,10 @@ class ConnectivityService {
   }
 
   Future<bool> isSupabaseAvailable() async {
+    final client = _supabase;
+    if (client == null) return false;
     try {
-      await _supabase
+      await client
           .from('clients')
           .select('id')
           .limit(1)
@@ -34,3 +40,4 @@ class ConnectivityService {
     }
   }
 }
+

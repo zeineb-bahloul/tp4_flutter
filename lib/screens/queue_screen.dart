@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/queue_state.dart';
 import '../providers/connectivity_provider.dart';
 import '../providers/queue_provider.dart';
+import '../services/auth_service.dart';
 import '../widgets/client_card.dart';
 import '../widgets/loading_widget.dart';
 import '../widgets/offline_banner.dart';
@@ -55,6 +56,13 @@ class _QueueScreenState extends State<QueueScreen> {
       appBar: AppBar(
         title: const Text('Resilient Waiting Room'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Se déconnecter',
+            icon: const Icon(Icons.logout),
+            onPressed: () => AuthService().signOut(),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -90,6 +98,7 @@ class _QueueScreenState extends State<QueueScreen> {
             child: Consumer<QueueProvider>(
               builder: (context, provider, _) {
                 switch (provider.state) {
+                  case QueueState.initial:
                   case QueueState.loading:
                     return const LoadingWidget(message: 'Loading waiting queue...');
                   case QueueState.empty:
@@ -166,3 +175,4 @@ class _QueueScreenState extends State<QueueScreen> {
     );
   }
 }
+

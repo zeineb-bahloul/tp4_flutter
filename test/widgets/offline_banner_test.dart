@@ -16,3 +16,4 @@ void main() {
     expect(find.text('No network connection'), findsOneWidget);
   });
 }
+

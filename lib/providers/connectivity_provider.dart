@@ -81,3 +81,4 @@ class ConnectivityProvider extends ChangeNotifier {
     super.dispose();
   }
 }
+
