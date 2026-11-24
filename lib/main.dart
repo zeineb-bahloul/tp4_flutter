@@ -1,11 +1,28 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:waiting_room_app/queue_provider.dart';
+
+import 'providers/connectivity_provider.dart';
+import 'providers/queue_provider.dart';
+import 'repositories/queue_repository.dart';
+import 'services/connectivity_service.dart';
+import 'services/geolocation_service.dart';
+import 'services/sync_service.dart';
+import 'storage/local_queue_storage.dart';
+import 'widgets/auth_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialiser sqflite pour Windows / macOS / Linux desktop
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
   // Load .env file
   try {
@@ -14,182 +31,71 @@ void main() async {
     debugPrint('Could not load .env file: $e');
   }
 
-  // Initialize Supabase if keys are provided
-  final rawUrl = (dotenv.env['SUPABASE_URL'] ?? '').trim();
-  final supabaseAnonKey = (dotenv.env['SUPABASE_ANON_KEY'] ?? '').trim();
+  const defaultSupabaseUrl = 'https://yyvxowsptnfcomzuavgj.supabase.co';
+  const defaultSupabaseKey = 'sb_publishable_hkUPwiGwJEUAM0oQjLRaoQ_E3nu2OF8';
 
-  String supabaseUrl = rawUrl;
+  final envUrl = (dotenv.env['SUPABASE_URL'] ?? '').trim();
+  final envKey = (dotenv.env['SUPABASE_ANON_KEY'] ?? '').trim();
+
+  String supabaseUrl = envUrl.isNotEmpty ? envUrl : defaultSupabaseUrl;
+  String supabaseAnonKey = envKey.isNotEmpty ? envKey : defaultSupabaseKey;
+
+  SupabaseClient? supabaseClient;
   try {
-    final parsed = Uri.parse(rawUrl);
-    if (parsed.hasScheme && parsed.host.isNotEmpty) {
-      supabaseUrl = '${parsed.scheme}://${parsed.host}';
-    }
-  } catch (_) {}
-
-  debugPrint('Using cleaned Supabase URL: $supabaseUrl');
-
-  if (supabaseUrl.isNotEmpty && 
-      supabaseAnonKey.isNotEmpty && 
-      !supabaseUrl.contains('your_supabase_url')) {
-    try {
-      await Supabase.initialize(
-        url: supabaseUrl,
-        publishableKey: supabaseAnonKey,
-      );
-
-      // Attempt anonymous sign in if enabled
-      try {
-        final authResponse = await Supabase.instance.client.auth.signInAnonymously();
-        debugPrint('Signed in anonymously as user: ${authResponse.user?.id}');
-      } catch (authError) {
-        debugPrint('Anonymous sign-in skipped or failed: $authError');
-      }
-    } catch (e) {
-      debugPrint('Failed to initialize Supabase: $e');
-    }
-  } else {
-    debugPrint('Supabase credentials not configured in .env yet.');
+    await Supabase.initialize(
+      url: supabaseUrl,
+      publishableKey: supabaseAnonKey,
+    );
+    supabaseClient = Supabase.instance.client;
+    debugPrint('Supabase initialized successfully!');
+  } catch (e) {
+    debugPrint('Failed to initialize Supabase: $e');
   }
 
+  final storage = LocalQueueStorage();
+  final repository = QueueRepository(supabaseClient, storage);
+  final syncService = SyncService(storage, repository);
+  final geolocationService = GeolocationService();
+  final connectivityService = ConnectivityService(supabaseClient);
+
+  final connectivityProvider = ConnectivityProvider(connectivityService);
+  // Initialiser de manière asynchrone sans bloquer le premier affichage de l'application
+  connectivityProvider.initialize().catchError((e) {
+    debugPrint('Error initializing connectivity provider: $e');
+  });
+
+  final queueProvider = QueueProvider(
+    repository,
+    geolocationService,
+    syncService: syncService,
+  );
+
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => QueueProvider(),
-      child: const WaitingRoomApp(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: connectivityProvider),
+        ChangeNotifierProvider.value(value: queueProvider),
+      ],
+      child: WaitingRoomApp(supabaseReady: supabaseClient != null),
     ),
   );
 }
 
 class WaitingRoomApp extends StatelessWidget {
-  const WaitingRoomApp({super.key});
+  const WaitingRoomApp({super.key, this.supabaseReady = true});
+
+  final bool supabaseReady;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Waiting Room',
+      title: 'Resilient Waiting Room',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const WaitingRoomScreen(),
-    );
-  }
-}
-
-class WaitingRoomScreen extends StatefulWidget {
-  const WaitingRoomScreen({super.key});
-
-  @override
-  State<WaitingRoomScreen> createState() => _WaitingRoomScreenState();
-}
-
-class _WaitingRoomScreenState extends State<WaitingRoomScreen> {
-  final TextEditingController _controller = TextEditingController();
-
-  void _addClient() {
-    final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      context.read<QueueProvider>().addClient(text);
-      _controller.clear();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Waiting Room'),
-        centerTitle: true,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            // Input Field
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter name',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _addClient(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _addClient,
-                  child: const Text('Add'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // Queue List
-            Expanded(
-              child: Consumer<QueueProvider>(
-                builder: (context, provider, _) {
-                  if (provider.clients.isEmpty) {
-                    return const Center(
-                      child: Text('No one in queue yet...'),
-                    );
-                  }
-                  return ListView.builder(
-                    itemCount: provider.clients.length,
-                    itemBuilder: (context, index) {
-                      final client = provider.clients[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        child: ListTile(
-                          title: Text(client.name),
-                          subtitle: Text(
-                            client.createdAt.toString().split(' ')[0],
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () {
-                              context
-                                  .read<QueueProvider>()
-                                  .removeClient(client.id);
-                            },
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-
-            // Next Button
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {
-                context.read<QueueProvider>().nextClient();
-              },
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('Next Client'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      home: AuthGate(supabaseReady: supabaseReady),
     );
   }
 }

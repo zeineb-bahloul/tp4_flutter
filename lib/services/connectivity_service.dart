@@ -1,0 +1,43 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class ConnectivityService {
+  final Connectivity _connectivity;
+  final SupabaseClient? _supabase;
+
+  ConnectivityService(
+    this._supabase, {
+    Connectivity? connectivity,
+  }) : _connectivity = connectivity ?? Connectivity();
+
+  Future<bool> hasNetwork() async {
+    try {
+      final results = await _connectivity.checkConnectivity();
+      return results.any((result) => result != ConnectivityResult.none);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Stream<bool> get networkChanges {
+    return _connectivity.onConnectivityChanged.map(
+      (results) => results.any((result) => result != ConnectivityResult.none),
+    );
+  }
+
+  Future<bool> isSupabaseAvailable() async {
+    final client = _supabase;
+    if (client == null) return false;
+    try {
+      await client
+          .from('clients')
+          .select('id')
+          .limit(1)
+          .timeout(const Duration(seconds: 5));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
